@@ -5,7 +5,6 @@ import (
 	"log"
 	"fmt"
 	"math/big"
-	"time"
 	"os"
 	"strconv"
 	"encoding/hex"
@@ -578,7 +577,7 @@ func (bc *SJB_Blockchain) SJB_GetBlock(blockHash []byte) ([]byte ,error) {
 	return blockBytes,err
 }
 
-func (bc *SJB_Blockchain) SJB_AddBlock(block *SJB_Block)  {
+func (bc *SJB_Blockchain) SJB_AddBlock(block *SJB_Block)  error{
 
 	err := bc.SJB_DB.Update(func(tx *bolt.Tx) error {
 
@@ -616,7 +615,5 @@ func (bc *SJB_Blockchain) SJB_AddBlock(block *SJB_Block)  {
 		return nil
 	})
 
-	if err != nil {
-		log.Panic(err)
-	}
+	return err
 }

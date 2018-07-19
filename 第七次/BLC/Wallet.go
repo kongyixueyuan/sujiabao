@@ -90,3 +90,19 @@ func SJB_NewWallet() *SJB_Wallet {
 
 	return &SJB_Wallet{privateKey,publicKey}
 }
+
+func SJB_PublickeyToAddress(publickey []byte) []byte{
+	ripemd160Hash := SJB_Ripemd160Hash(publickey)
+	version_ripemd160Hash := append([]byte{version},ripemd160Hash...)
+	checkSumBytes := SJB_CheckSum(version_ripemd160Hash)
+	bytes := append(version_ripemd160Hash,checkSumBytes...)
+
+	return SJB_Base58Encode(bytes)
+}
+
+func SJB_Ripenmd160ToAddress(ripemd160Hash []byte) []byte{
+	version_ripemd160Hash := append([]byte{version},ripemd160Hash...)
+	checkSumBytes := SJB_CheckSum(version_ripemd160Hash)
+	bytes := append(version_ripemd160Hash,checkSumBytes...)
+	return SJB_Base58Encode(bytes)
+}

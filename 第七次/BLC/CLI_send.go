@@ -2,31 +2,40 @@ package BLC
 
 import (
 	"strconv"
+	"os"
 	"fmt"
+	"encoding/hex"
 )
 
 func (cli *SJB_CLI) SJB_send(from []string,to []string,amount []string,nodeId string,minenow bool) {
 
 	blockchain := SJB_BlockchainObject(nodeId)
 	defer blockchain.SJB_DB.Close()
+	utxoSet := &SJB_UTXOSet{blockchain}
+
+	value, _ := strconv.Atoi(amount[0])
+
+	if  value <= 0{
+		fmt.Println("amount is wrong" )
+		os.Exit(1)
+	}
 
 	if (minenow) {
 		blockchain.SJB_MineNewBlock(from, to, amount,nodeId)
-		utxoSet := &SJB_UTXOSet{blockchain}
 		utxoSet.SJB_Update()
 	}else{
 		nodeAddress = fmt.Sprintf("localhost:%s",nodeId)
-		if nodeAddress != knowNodes[0]{
-			utxoSet := &SJB_UTXOSet{blockchain}
-			var txs []*SJB_Transaction
-
-			for index,addressfrom := range from {
-				value, _ := strconv.Atoi(amount[index])
-				tx := SJB_NewSimpleTransaction(addressfrom, to[index], int64(value), utxoSet,txs,nodeId)
-				SJB_sendTx(knowNodes[0], tx)
-				txs = append(txs, tx)
-			}
-			fmt.Printf("%d个交易发送",len(txs))
+		var txs []*SJB_Transaction
+		for id := range mempool {
+			tx := mempool[id]
+			txs = append(txs, &tx)
+		}
+		if nodeAddress != knowNodes[0] {
+			tx := SJB_NewSimpleTransaction(from[0], to[0], int64(value), utxoSet, txs, nodeId)
+			mempool[hex.EncodeToString(tx.SJB_TxHash)] = *tx
+			SJB_sendTx(knowNodes[0], tx)
+		}else{
+			println("主节点挖矿命令需要 + -mine")
 		}
 	}
 }

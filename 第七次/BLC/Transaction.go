@@ -13,6 +13,7 @@ import (
 	"time"
 	"fmt"
 	"os"
+	"strings"
 )
 
 // UTXO
@@ -32,6 +33,45 @@ func (tx *SJB_Transaction) SJB_IsCoinbaseTransaction() bool {
 	return false
 }
 
+func (tx *SJB_Transaction) SJB_PrintTx()  {
+
+	fmt.Printf("\ntxhash  %x\n", tx.SJB_TxHash)
+	fmt.Println("Vins:")
+	for _, in := range tx.SJB_Vins {
+		fmt.Printf("prehash %x\n", in.SJB_TxHash)
+		fmt.Printf("index %d\n", in.SJB_Vout)
+		fmt.Printf("public %x\n", in.SJB_PublicKey)
+	}
+
+	fmt.Println("Vouts:")
+	for _, out := range tx.SJB_Vouts {
+		fmt.Println(out.SJB_Value)
+		fmt.Println(out.SJB_Ripemd160Hash)
+	}
+}
+
+func (tx *SJB_Transaction) String() string {
+	var lines []string
+
+	lines = append(lines, fmt.Sprintf("--- Transaction %x:", tx.SJB_TxHash))
+
+	for i, input := range tx.SJB_Vins {
+
+		lines = append(lines, fmt.Sprintf("     Input %d:", i))
+		lines = append(lines, fmt.Sprintf("       TXID:      %x", input.SJB_TxHash))
+		lines = append(lines, fmt.Sprintf("       Out:       %d", input.SJB_Vout))
+		lines = append(lines, fmt.Sprintf("       Signature: %x", input.SJB_Signature))
+		lines = append(lines, fmt.Sprintf("       PubKey:    %x", input.SJB_PublicKey))
+	}
+
+	for i, output := range tx.SJB_Vouts {
+		lines = append(lines, fmt.Sprintf("     Output %d:", i))
+		lines = append(lines, fmt.Sprintf("       Value:  %d", output.SJB_Value))
+		lines = append(lines, fmt.Sprintf("       Script: %x", output.SJB_Ripemd160Hash))
+	}
+
+	return strings.Join(lines, "\n")
+}
 
 func SJB_NewCoinbaseTransaction(address string) *SJB_Transaction {
 
@@ -82,9 +122,10 @@ func SJB_NewSimpleTransaction(from string, to string,amount int64,utxoSet *SJB_U
 	txOutput := SJB_NewTXOutput(int64(amount),to)
 	txOutputs = append(txOutputs,txOutput)
 	//找零
-	txOutput = SJB_NewTXOutput(int64(money) - int64(amount),from)
-	txOutputs = append(txOutputs,txOutput)
-
+	if money > amount {
+		txOutput = SJB_NewTXOutput(int64(money)-int64(amount), from)
+		txOutputs = append(txOutputs, txOutput)
+	}
 	tx := &SJB_Transaction{[]byte{},txIntputs,txOutputs}
 
 	tx.SJB_HashTransaction()
@@ -168,17 +209,21 @@ func (tx *SJB_Transaction) SJB_Sign(privKey ecdsa.PrivateKey, prevTXs map[string
 	txCopy := tx.SJB_TrimmedCopy()
 
 	for inID, vin := range txCopy.SJB_Vins {
+		prevTx := prevTXs[hex.EncodeToString(vin.SJB_TxHash)]
 		txCopy.SJB_Vins[inID].SJB_Signature = nil
-		txCopy.SJB_Vins[inID].SJB_PublicKey = prevTXs[hex.EncodeToString(vin.SJB_TxHash)].SJB_Vouts[vin.SJB_Vout].SJB_Ripemd160Hash
-		txCopy.SJB_TxHash = txCopy.SJB_Hash()
+		txCopy.SJB_Vins[inID].SJB_PublicKey = prevTx.SJB_Vouts[vin.SJB_Vout].SJB_Ripemd160Hash
 
-		r, s, err := ecdsa.Sign(rand.Reader, &privKey, txCopy.SJB_TxHash)
+		databytes := sha256.Sum256([]byte(txCopy.String()))
+
+		r, s, err := ecdsa.Sign(rand.Reader, &privKey, databytes[:])
 		if err != nil {
 			log.Panic(err)
 		}
 		signature := append(r.Bytes(), s.Bytes()...)
 
 		tx.SJB_Vins[inID].SJB_Signature = signature
+
+		txCopy.SJB_Vins[inID].SJB_PublicKey = nil
 	}
 	return
 }
@@ -204,8 +249,8 @@ func (tx *SJB_Transaction) SJB_Verify(prevTXs map[string]SJB_Transaction) bool {
 	for inID, vin := range tx.SJB_Vins {
 		txCopy.SJB_Vins[inID].SJB_Signature = nil
 		txCopy.SJB_Vins[inID].SJB_PublicKey = prevTXs[hex.EncodeToString(vin.SJB_TxHash)].SJB_Vouts[vin.SJB_Vout].SJB_Ripemd160Hash
-		txCopy.SJB_TxHash = txCopy.SJB_Hash()
-		//txCopy.SJB_Vins[inID].PublicKey = nil
+
+		databytes := sha256.Sum256([]byte(txCopy.String()))
 
 		r := big.Int{}
 		s := big.Int{}
@@ -220,9 +265,10 @@ func (tx *SJB_Transaction) SJB_Verify(prevTXs map[string]SJB_Transaction) bool {
 		y.SetBytes(vin.SJB_PublicKey[(keyLen / 2):])
 
 		rawPubKey := ecdsa.PublicKey{curve, &x, &y}
-		if ecdsa.Verify(&rawPubKey, txCopy.SJB_TxHash, &r, &s) == false {
+		if ecdsa.Verify(&rawPubKey, databytes[:], &r, &s) == false {
 			return false
 		}
+		txCopy.SJB_Vins[inID].SJB_PublicKey = nil
 	}
 
 	return true

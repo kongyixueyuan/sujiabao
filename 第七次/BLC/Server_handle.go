@@ -93,14 +93,14 @@ func SJB_handleGetData(request []byte,bc *SJB_Blockchain)  {
 		SJB_sendBlock(payload.SJB_AddrFrom, block)
 	}
 
-	if payload.SJB_Type == "tx" {
+	if payload.SJB_Type == TX_TYPE {
 		txID := hex.EncodeToString(payload.Hash)
 		TxData := mempool[txID]
 		SJB_sendTx(payload.SJB_AddrFrom, &TxData)
 	}
 }
 
-func SJB_handleBlock(request []byte,bc *SJB_Blockchain)  {
+func SJB_handleBlock(request []byte,bc *SJB_Blockchain) {
 
 	var buff bytes.Buffer
 	var payload BlockData
@@ -120,8 +120,17 @@ func SJB_handleBlock(request []byte,bc *SJB_Blockchain)  {
 	fmt.Println("Recevied a new block!")
 	bc.SJB_AddBlock(block)
 	fmt.Printf("Added block %x\n", block.SJB_Hash)
+	block.SJB_PrintBlock()
+
+	for _, blocktx := range block.SJB_Txs {
+		if mempool[hex.EncodeToString(blocktx.SJB_TxHash)].SJB_TxHash == nil {
+			delete(mempool,hex.EncodeToString(blocktx.SJB_TxHash))
+		}
+	}
+
 
 	if len(transactionArray) > 0 {
+		fmt.Println("something need to do......")
 		blockHash := transactionArray[0]
 		SJB_sendGetData(payload.SJB_AddrFrom, "block", blockHash)
 		transactionArray = transactionArray[1:]
@@ -129,6 +138,18 @@ func SJB_handleBlock(request []byte,bc *SJB_Blockchain)  {
 		fmt.Println("数据库重置......")
 		UTXOSet := &SJB_UTXOSet{bc}
 		UTXOSet.SJB_ResetUTXOSet()
+
+
+		if nodeAddress == knowNodes[0] {
+			for _, node := range knowNodes {
+				////主节点负责转发交易信息
+				if node != nodeAddress {
+					//SJB_sendInv(node, "tx", [][]byte{tx.SJB_TxHash})
+					SJB_sendVersion(node,bc)
+				}
+			}
+		}
+
 	}
 }
 
@@ -149,17 +170,23 @@ func SJB_handleTx(request []byte,bc *SJB_Blockchain)  {
 	txData := payload.SJB_TransactonData
 	tx := SJB_DeserializeTransaction(txData)
 	mempool[hex.EncodeToString(tx.SJB_TxHash)] = tx
+	fmt.Printf("交易池有%d笔交易...", len(mempool))
 
 	if nodeAddress == knowNodes[0] {
 		for _, node := range knowNodes {
+			//主节点负责转发交易信息
 			if node != nodeAddress && node != payload.SJB_AddrFrom {
 				SJB_sendInv(node, "tx", [][]byte{tx.SJB_TxHash})
 			}
 		}
 	} else {
+		//挖矿
+
 		if len(mempool) >= 2 && len(MyminerAddress) > 0 {
+			fmt.Println("开始处理缓冲池内交易")
 		MineTransactions:
 			var txs []*SJB_Transaction
+			utxoSet := &SJB_UTXOSet{bc}
 			for id := range mempool {
 				tx := mempool[id]
 				if bc.SJB_VerifyTransaction(&tx,txs) {
@@ -171,7 +198,7 @@ func SJB_handleTx(request []byte,bc *SJB_Blockchain)  {
 				fmt.Println("All transactions are invalid! Waiting for new ones...")
 				return
 			}
-
+			//挖矿奖励
 			cbTx := SJB_NewCoinbaseTransaction(MyminerAddress)
 			txs = append(txs, cbTx)
 
@@ -185,11 +212,24 @@ func SJB_handleTx(request []byte,bc *SJB_Blockchain)  {
 				}
 				return nil
 			})
+			fmt.Println("开始挖矿.....")
+			newBlock := SJB_NewBlock(txs,block.SJB_Height+1,block.SJB_Hash)
+			//保存数据库
+			bc.SJB_DB.Update(func(tx *bolt.Tx) error {
+				b := tx.Bucket([]byte(blockTableName))
+				if b != nil {
 
-			newBlock := SJB_NewBlock(txs,block.SJB_Height,block.SJB_PrevBlockHash)
-			UTXOSet := SJB_UTXOSet{bc}
-			UTXOSet.SJB_ResetUTXOSet()
+					b.Put(newBlock.SJB_Hash, newBlock.SJB_Serialize())
+					b.Put([]byte("l"), newBlock.SJB_Hash)
+					fmt.Printf("new block hash %x\n",newBlock.SJB_Hash)
+					bc.SJB_Tip = newBlock.SJB_Hash
+				}
+				return nil
+			})
 
+
+			//utxoSet.SJB_Update()
+			utxoSet.SJB_ResetUTXOSet()
 			fmt.Println("New block is mined!")
 
 			for _, tx := range txs {
@@ -197,11 +237,13 @@ func SJB_handleTx(request []byte,bc *SJB_Blockchain)  {
 				delete(mempool, txID)
 			}
 
-			for _, node := range knowNodes {
-				if node != nodeAddress {
-					SJB_sendInv(node, "block", [][]byte{newBlock.SJB_Hash})
-				}
-			}
+			SJB_sendBlock(knowNodes[0],newBlock.SJB_Serialize())
+			//
+			//for _, node := range knowNodes {
+			//	if node != nodeAddress {
+			//		SJB_sendInv(node, "block", [][]byte{newBlock.SJB_Hash})
+			//	}
+			//}
 
 			if len(mempool) > 0 {
 				goto MineTransactions
@@ -226,6 +268,7 @@ func SJB_handleInv(request []byte,bc *SJB_Blockchain)  {
 	}
 
 	if payload.SJB_Type == BLOCK_TYPE {
+		transactionArray = payload.SJB_Items
 		blockHash := payload.SJB_Items[0]
 		SJB_sendGetData(payload.SJB_AddrFrom, BLOCK_TYPE , blockHash)
 

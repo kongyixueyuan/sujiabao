@@ -5,7 +5,7 @@ import (
 	"log"
 	"encoding/hex"
 	"fmt"
-	"bytes"
+	"os"
 )
 
 
@@ -71,7 +71,6 @@ func (utxoSet *SJB_UTXOSet) SJB_findUTXOForAddress(address string) []*SJB_UTXO{
 func (utxoSet *SJB_UTXOSet) SJB_GetBalance(address string) int64 {
 
 	UTXOS := utxoSet.SJB_findUTXOForAddress(address)
-	fmt.Println(len(UTXOS))
 	var amount int64
 	for _,utxo := range UTXOS  {
 		amount += utxo.SJB_Output.SJB_Value
@@ -93,7 +92,6 @@ func (utxoSet *SJB_UTXOSet) SJB_FindUnPackageSpendableUTXOS(from string, txs []*
 		if tx.SJB_IsCoinbaseTransaction() == false {
 			for _, in := range tx.SJB_Vins {
 				publicKeyHash := SJB_Base58Decode([]byte(from))
-
 				ripemd160Hash := publicKeyHash[1:len(publicKeyHash) - 4]
 				if in.SJB_UnLockRipemd160Hash(ripemd160Hash) {
 					key := hex.EncodeToString(in.SJB_TxHash)
@@ -178,24 +176,24 @@ func (utxoSet *SJB_UTXOSet) SJB_FindSpendableUTXOS(from string,amount int64,txs 
 				txOutputs := SJB_DeserializeTXOutputs(v)
 
 				for _,utxo := range txOutputs.SJB_UTXOS {
-
-					money += utxo.SJB_Output.SJB_Value
-					txHash := hex.EncodeToString(utxo.SJB_TxHash)
-					spentableUTXO[txHash] = append(spentableUTXO[txHash],utxo.SJB_Index)
-
-					if money >= amount {
-						 break UTXOBREAK;
+					if utxo.SJB_Output.SJB_UnLockScriptPubKeyWithAddress(from) {
+						money += utxo.SJB_Output.SJB_Value
+						txHash := hex.EncodeToString(utxo.SJB_TxHash)
+						spentableUTXO[txHash] = append(spentableUTXO[txHash], utxo.SJB_Index)
+						if money >= amount {
+							break UTXOBREAK
+						}
 					}
 				}
 			}
-
 		}
 
 		return nil
 	})
 
 	if money < amount{
-		log.Panic("余额不足......")
+		fmt.Println("余额不足。。")
+		os.Exit(1)
 	}
 
 
@@ -205,101 +203,53 @@ func (utxoSet *SJB_UTXOSet) SJB_FindSpendableUTXOS(from string,amount int64,txs 
 
 func (utxoSet *SJB_UTXOSet) SJB_Update()  {
 
-	block := utxoSet.SJB_Blockchain.SJB_Iterator().SJB_Next()
-
-	ins := []*SJB_TXInput{}
-	outsMap := make(map[string]*SJB_TXOutputs)
-
-	for _,tx := range block.SJB_Txs {
-		for _,in := range tx.SJB_Vins {
-			ins = append(ins,in)
-		}
-	}
-
-	for _,tx := range block.SJB_Txs  {
-
-		utxos := []*SJB_UTXO{}
-
-		for index,out := range tx.SJB_Vouts  {
-			isSpent := false
-			for _,in := range ins  {
-				if in.SJB_Vout == index && bytes.Compare(tx.SJB_TxHash ,in.SJB_TxHash) == 0 && bytes.Compare(out.SJB_Ripemd160Hash,SJB_Ripemd160Hash(in.SJB_PublicKey)) == 0 {
-					isSpent = true
-					continue
-				}
-			}
-
-			if isSpent == false {
-				utxo := &SJB_UTXO{tx.SJB_TxHash,index,out}
-				utxos = append(utxos,utxo)
-			}
-
-		}
-
-		if len(utxos) > 0 {
-			txHash := hex.EncodeToString(tx.SJB_TxHash)
-			outsMap[txHash] = &SJB_TXOutputs{utxos}
-		}
-
-	}
-
-	err := utxoSet.SJB_Blockchain.SJB_DB.Update(func(tx *bolt.Tx) error{
-
+	db := utxoSet.SJB_Blockchain.SJB_DB
+	newestBlock := utxoSet.SJB_Blockchain.SJB_Iterator().SJB_Next()
+	err := db.Update(func(tx *bolt.Tx) error {
 		b := tx.Bucket([]byte(utxoTableName))
 
-		if b != nil {
+		for _, tx := range newestBlock.SJB_Txs{
+			if tx.SJB_IsCoinbaseTransaction() == false{
+				for _, vin := range tx.SJB_Vins{
+					unUTXOs := &SJB_TXOutputs{[]*SJB_UTXO{}}
+					outdata := b.Get(vin.SJB_TxHash)
+					utxos := SJB_DeserializeTXOutputs(outdata)
 
-			for _,in := range ins {
+					for _,utxo := range utxos.SJB_UTXOS{
+						if utxo.SJB_Index != vin.SJB_Vout{
+							unUTXOs.SJB_UTXOS = append(unUTXOs.SJB_UTXOS, utxo)
+						}
+					}
 
-				txOutputsBytes := b.Get(in.SJB_TxHash)
-				if len(txOutputsBytes) == 0 {
-					continue
-				}
-
-				fmt.Println(txOutputsBytes)
-
-				txOutputs := SJB_DeserializeTXOutputs(txOutputsBytes)
-
-				fmt.Println(txOutputs)
-
-				UTXOS := []*SJB_UTXO{}
-				isNeedDelete := false
-				for _,utxo := range txOutputs.SJB_UTXOS  {
-					if in.SJB_Vout == utxo.SJB_Index && bytes.Compare(utxo.SJB_Output.SJB_Ripemd160Hash,SJB_Ripemd160Hash(in.SJB_PublicKey)) == 0 {
-						isNeedDelete = true
-					} else {
-						UTXOS = append(UTXOS,utxo)
+					if len(unUTXOs.SJB_UTXOS) == 0{
+						err := b.Delete(vin.SJB_TxHash)
+						if err != nil{
+							log.Panic(err)
+						}
+					}else{
+						err := b.Put(vin.SJB_TxHash,unUTXOs.SJB_Serialize())
+						if err != nil{
+							log.Panic(err)
+						}
 					}
 				}
-
-
-
-				if isNeedDelete {
-					b.Delete(in.SJB_TxHash)
-					if len(UTXOS) > 0 {
-
-						preTXOutputs := outsMap[hex.EncodeToString(in.SJB_TxHash)]
-
-						preTXOutputs.SJB_UTXOS = append(preTXOutputs.SJB_UTXOS,UTXOS...)
-
-						outsMap[hex.EncodeToString(in.SJB_TxHash)] = preTXOutputs
-
-					}
-				}
-
 			}
 
-			for keyHash,outPuts := range outsMap  {
-				keyHashBytes,_ := hex.DecodeString(keyHash)
-				b.Put(keyHashBytes,outPuts.SJB_Serialize())
+			unUTXOs := &SJB_TXOutputs{[]*SJB_UTXO{}}
+			for index, out := range tx.SJB_Vouts{
+				utxo := &SJB_UTXO{tx.SJB_TxHash,index,out}
+				//println("out value",out.SJB_Value)
+				unUTXOs.SJB_UTXOS = append(unUTXOs.SJB_UTXOS,utxo)
 			}
-
+			err := b.Put(tx.SJB_TxHash,unUTXOs.SJB_Serialize())
+			if err != nil{
+				log.Panic(err)
+			}
 		}
 
 		return nil
 	})
-
-	if err != nil {
+	if err != nil{
 		log.Panic(err)
 	}
 

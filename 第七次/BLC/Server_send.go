@@ -48,10 +48,11 @@ func SJB_sendTx(toAddress string, txn *SJB_Transaction){
 }
 
 func SJB_sendData(to string,data []byte)  {
-	fmt.Printf("向%s发送数据......",to)
+	fmt.Printf("向%s发送数据......\n",to)
 	conn, err := net.Dial("tcp", to)
 	if err != nil {
-		log.Panic(err)
+		fmt.Println("发送不成功")
+		return
 	}
 	defer conn.Close()
 

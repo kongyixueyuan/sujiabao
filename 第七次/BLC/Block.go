@@ -18,7 +18,24 @@ type SJB_Block struct {
 	SJB_Nonce int64
 }
 
-
+func (block *SJB_Block) SJB_PrintBlock(){
+	fmt.Printf("\n")
+	for _, tx := range block.SJB_Txs{
+		if tx.SJB_IsCoinbaseTransaction() == false {
+			for _, vin := range tx.SJB_Vins {
+				fmt.Printf("%s ", SJB_PublickeyToAddress(vin.SJB_PublicKey))
+			}
+		}else{
+			fmt.Printf("coinbase")
+		}
+		fmt.Printf("===========>")
+		for _,vou := range tx.SJB_Vouts{
+			fmt.Printf("[%s %dtoken]  ",SJB_Ripenmd160ToAddress(vou.SJB_Ripemd160Hash),vou.SJB_Value)
+		}
+		fmt.Printf("\n")
+	}
+	fmt.Printf("\n\n")
+}
 
 func (block *SJB_Block) SJB_HashTransactions() []byte  {
 
@@ -59,7 +76,7 @@ func SJB_DeSerianlize(blockBytes []byte) *SJB_Block{
 }
 
 func SJB_NewBlock(txs []*SJB_Transaction,height int64,prevBlockHash []byte) *SJB_Block {
-
+	fmt.Printf("height %d, hash%x\n",height,prevBlockHash)
 	block := &SJB_Block{height,prevBlockHash,txs,time.Now().Unix(),nil,0}
 
 	pow := SJB_NewProofOfWork(block)
@@ -68,8 +85,7 @@ func SJB_NewBlock(txs []*SJB_Transaction,height int64,prevBlockHash []byte) *SJB
 	block.SJB_Hash = hash[:]
 	block.SJB_Nonce = nonce
 
-	fmt.Println("******************* new block **********************")
-
+	fmt.Println("\n******************* new block **********************")
 	return block
 
 }
